@@ -1,0 +1,60 @@
+# CEnT-S Calendar Monitor — scheduled GitHub Actions workflow
+#
+# Runs monitor.py every 5 minutes, 24/7, entirely on GitHub's free cloud
+# runners. Nothing on your laptop needs to be on or running.
+#
+# NOTE ON TIMING: GitHub documents that scheduled ("cron") workflows can be
+# delayed by a few minutes during periods of high platform load, especially
+# right at common times like the top of the hour. This is a GitHub-side
+# limitation with no workaround — it is usually only 1-2 minutes late, but
+# flagging it so you're not surprised.
+
+name: CEnT-S Calendar Monitor
+
+on:
+  schedule:
+    # Every 5 minutes, all day, every day. Cron format: minute hour day month weekday.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}   # lets you click "Run workflow" manually in the Actions tab to test
+
+permissions:
+  contents: write   # needed so this workflow can commit the updated state.json back to the repo
+
+concurrency:
+  group: cisia-monitor
+  cancel-in-progress: false   # never cancel a run that's already mid-check
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3   # safety net: kill the job if it ever hangs, so it can't eat your minutes
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python monitor.py
+
+      - name: Commit updated state file (only if it changed)
+        run: |
+          git config user.name "cisia-monitor-bot"
+          git config user.email "actions@github.com"
+          if ! git diff --quiet -- state.json; then
+            git add state.json
+            git commit -m "Update calendar state [skip ci]"
+            git push
+          else
+            echo "No change to state.json — nothing to commit."
+          fi
